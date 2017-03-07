@@ -63,6 +63,7 @@ class ExtractionContainers
     STXXLWayIDStartEndVector way_start_end_id_list;
     std::unordered_map<OSMNodeID, NodeID> external_to_internal_node_id_map;
     unsigned max_internal_node_id;
+    std::vector<TurnRestriction> unconditional_turn_restrictions;
 
     ExtractionContainers();
 

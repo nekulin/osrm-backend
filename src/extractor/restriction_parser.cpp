@@ -195,7 +195,7 @@ RestrictionParser::TryParse(const osmium::Relation &relation, const bool parse_c
 
             for (auto &p : parsed)
             {
-                restriction_container.condition = p.condition;
+                restriction_container.restriction.condition = p.condition;
                 parsed_restrictions.push_back(restriction_container);
             }
         }
