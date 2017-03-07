@@ -629,8 +629,6 @@ void ExtractionContainers::WriteNodes(storage::io::FileWriter &file_out) const
 void ExtractionContainers::WriteRestrictions(const std::string &path)
 {
     // serialize restrictions
-    // TODO restrictions serialization does not work; InputRestrictionContainer type
-    // requires a custom serialization function
     unsigned written_restriction_count = 0;
     storage::io::FileWriter restrictions_out_file(path,
                                                   storage::io::FileWriter::GenerateFingerprint);
@@ -641,14 +639,19 @@ void ExtractionContainers::WriteRestrictions(const std::string &path)
     {
         if (SPECIAL_NODEID != restriction_container.restriction.from.node &&
             SPECIAL_NODEID != restriction_container.restriction.via.node &&
-            SPECIAL_NODEID != restriction_container.restriction.to.node &&
-            !restriction_container.restriction.condition.empty())
+            SPECIAL_NODEID != restriction_container.restriction.to.node)
         {
-            restrictions_out_file.WriteOne(restriction_container.restriction);
-            ++written_restriction_count;
-        } else {
-            // save unconditional turn restriction to memory, for use in ebg later
-            unconditional_turn_restrictions.push_back(restriction_container.restriction);
+            if (!restriction_container.restriction.condition.empty())
+            {
+                // TODO restrictions serialization does not work; InputRestrictionContainer type
+                // requires a custom serialization function
+                // write conditional turn restrictions to disk, for use in contractor later
+                restrictions_out_file.WriteOne(restriction_container.restriction);
+                ++written_restriction_count;
+            } else {
+                // save unconditional turn restriction to memory, for use in ebg later
+                unconditional_turn_restrictions.push_back(restriction_container.restriction);
+            }
         }
     }
     restrictions_out_file.SkipToBeginning();

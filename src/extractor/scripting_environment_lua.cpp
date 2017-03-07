@@ -530,9 +530,12 @@ void Sol2ScriptingEnvironment::ProcessElements(
                     result_res.reset();
                     result_res = restriction_parser.TryParse(
                         static_cast<const osmium::Relation &>(*entity), true);
-                    for (const InputRestrictionContainer &r : *result_res)
+                    if (result_res)
                     {
-                        resulting_restrictions.push_back(r);
+                        for (const InputRestrictionContainer &r : *result_res)
+                        {
+                            resulting_restrictions.push_back(r);
+                        }
                     }
                     break;
                 default:
