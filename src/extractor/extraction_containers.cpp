@@ -1,6 +1,8 @@
 #include "extractor/extraction_containers.hpp"
 #include "extractor/extraction_segment.hpp"
 #include "extractor/extraction_way.hpp"
+#include "extractor/restriction.hpp"
+#include "extractor/serialization.hpp"
 
 #include "util/coordinate_calculation.hpp"
 
@@ -643,12 +645,12 @@ void ExtractionContainers::WriteRestrictions(const std::string &path)
         {
             if (!restriction_container.restriction.condition.empty())
             {
-                // TODO restrictions serialization does not work; InputRestrictionContainer type
-                // requires a custom serialization function
                 // write conditional turn restrictions to disk, for use in contractor later
-                restrictions_out_file.WriteOne(restriction_container.restriction);
+                io::write(restrictions_out_file, restriction_container);
                 ++written_restriction_count;
-            } else {
+            }
+            else
+            {
                 // save unconditional turn restriction to memory, for use in ebg later
                 unconditional_turn_restrictions.push_back(restriction_container.restriction);
             }

@@ -104,6 +104,13 @@ class FileReader
         }
     }
 
+    void ReadInto(std::string &target)
+    {
+        auto len = ReadElementCount32();
+        target.resize(len);
+        ReadInto(&target[0], len);
+    }
+
     template <typename T> void ReadInto(std::vector<T> &target)
     {
         ReadInto(target.data(), target.size());
@@ -224,6 +231,13 @@ class FileWriter
     template <typename T> void WriteFrom(const std::vector<T> &src)
     {
         WriteFrom(src.data(), src.size());
+    }
+
+    void WriteFrom(const std::string &src)
+    {
+        auto len = static_cast<std::uint32_t>(src.size());
+        WriteOne(len);
+        WriteFrom(src.data(), len);
     }
 
     template <typename T> void WriteFrom(const T &src) { WriteFrom(&src, 1); }
