@@ -6,6 +6,7 @@
 #include "extractor/edge_based_graph_factory.hpp"
 #include "extractor/files.hpp"
 #include "extractor/node_based_edge.hpp"
+#include "extractor/restriction.hpp"
 
 #include "storage/io.hpp"
 
@@ -260,7 +261,6 @@ updateSegmentData(const UpdaterConfig &config,
         {
             merged_counters[i] += counters[i];
         }
-    }
 
     for (std::size_t i = 0; i < merged_counters.size(); i++)
     {
@@ -443,8 +443,15 @@ Updater::LoadAndUpdateEdgeExpandedGraph(std::vector<extractor::EdgeBasedEdge> &e
         reader.ReadInto(edge_based_edge_list);
     }
 
+    const bool update_conditional_turns = !config.turn_restrictions_path.empty();
     const bool update_edge_weights = !config.segment_speed_lookup_paths.empty();
     const bool update_turn_penalties = !config.turn_penalty_lookup_paths.empty();
+
+    std::vector<extractor::InputRestrictionContainer> conditional_turns;
+    if (update_conditional_turns)
+    {
+        extractor::io::read(config.turn_restrictions_path, conditional_turns);
+    }
 
     if (!update_edge_weights && !update_turn_penalties)
     {
