@@ -377,6 +377,7 @@ updateTurnPenalties(const UpdaterConfig &config,
                     const TurnLookupTable &turn_penalty_lookup,
                     std::vector<TurnPenalty> &turn_weight_penalties,
                     std::vector<TurnPenalty> &turn_duration_penalties,
+                    std::vector<extractor::InputRestrictionContainer> &conditional_turns,
                     const std::vector<extractor::QueryNode> &internal_to_external_node_map)
 {
     const auto weight_multiplier = profile_properties.GetWeightMultiplier();
@@ -389,17 +390,36 @@ updateTurnPenalties(const UpdaterConfig &config,
             turn_penalties_index_region.get_address());
     BOOST_ASSERT(is_aligned<extractor::lookup::TurnIndexBlock>(turn_index_blocks));
 
+    // Get the turn penalty and update to the new value if required
     std::vector<std::uint64_t> updated_turns;
     for (std::uint64_t edge_index = 0; edge_index < turn_weight_penalties.size(); ++edge_index)
     {
-        // Get the turn penalty and update to the new value if required
-        const extractor::lookup::TurnIndexBlock internal_turn_index = turn_index_blocks[edge_index];
-        const Turn turn_index{internal_to_external_node_map[internal_turn_index.from_id].node_id,
-                              internal_to_external_node_map[internal_turn_index.via_id].node_id,
-                              internal_to_external_node_map[internal_turn_index.to_id].node_id};
+        // edges are stored by internal OSRM ids, these need to be mapped back to OSM ids
+        const extractor::lookup::TurnIndexBlock internal_turn = turn_index_blocks[edge_index];
+        const Turn osm_turn{internal_to_external_node_map[internal_turn.from_id].node_id,
+                            internal_to_external_node_map[internal_turn.via_id].node_id,
+                            internal_to_external_node_map[internal_turn.to_id].node_id};
+        // original turn weight/duration values
         auto turn_weight_penalty = turn_weight_penalties[edge_index];
         auto turn_duration_penalty = turn_duration_penalties[edge_index];
-        if (auto value = turn_penalty_lookup(turn_index))
+
+        // first try and find the turn in question in the conditional turns vector
+        const auto FindTurnEdge =
+            [&internal_turn](const extractor::InputRestrictionContainer &lhs) {
+                return internal_turn.from_id == lhs.restriction.from.node &&
+                       internal_turn.via_id == lhs.restriction.via.node &&
+                       internal_turn.to_id == lhs.restriction.to.node;
+            };
+        const auto found_conditional =
+            find_if(begin(conditional_turns), end(conditional_turns), FindTurnEdge);
+        if (found_conditional != conditional_turns.end())
+        {
+            // if it is found and the turn is valid for `now`, set turn_weight_penalties[edge_index]
+            // to INVALID and continue
+            if (ValidateTurn(found_turn))
+               turn_weight_penalties[edge_index] = INVALID_EDGE_WEIGHT;
+        }
+        if (auto value = turn_penalty_lookup(osm_turn))
         {
             turn_duration_penalty =
                 boost::numeric_cast<TurnPenalty>(std::round(value->duration * 10.));
@@ -414,14 +434,20 @@ updateTurnPenalties(const UpdaterConfig &config,
 
         if (turn_weight_penalty < 0)
         {
-            util::Log(logWARNING) << "Negative turn penalty at " << turn_index.from << ", "
-                                  << turn_index.via << ", " << turn_index.to
+            util::Log(logWARNING) << "Negative turn penalty at " << internal_turn.from_id << ", "
+                                  << internal_turn.via_id << ", " << internal_turn.to_id
                                   << ": turn penalty " << turn_weight_penalty;
         }
     }
 
     return updated_turns;
 }
+}
+
+Updater::TimeZoner::Timezoner(std::string tz_filename)
+{
+    // load tz file into memory
+    // set 'now'
 }
 
 Updater::NumNodesAndEdges Updater::LoadAndUpdateEdgeExpandedGraph() const
@@ -541,6 +567,7 @@ EdgeID Updater::LoadAndUpdateEdgeExpandedGraph(
                                                           turn_penalty_lookup,
                                                           turn_weight_penalties,
                                                           turn_duration_penalties,
+                                                          conditional_turns,
                                                           internal_to_external_node_map);
         const auto offset = updated_segments.size();
         updated_segments.resize(offset + updated_turn_penalties.size());
