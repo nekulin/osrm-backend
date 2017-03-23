@@ -416,8 +416,8 @@ updateTurnPenalties(const UpdaterConfig &config,
         {
             // if it is found and the turn is valid for `now`, set turn_weight_penalties[edge_index]
             // to INVALID and continue
-            if (ValidateTurn(found_turn))
-               turn_weight_penalties[edge_index] = INVALID_EDGE_WEIGHT;
+            if (ValidateTurn(found_conditional))
+               turn_weight_penalties[edge_index] = INVALID_TURN_PENALTY;
         }
         if (auto value = turn_penalty_lookup(osm_turn))
         {
@@ -442,12 +442,6 @@ updateTurnPenalties(const UpdaterConfig &config,
 
     return updated_turns;
 }
-}
-
-Updater::TimeZoner::Timezoner(std::string tz_filename)
-{
-    // load tz file into memory
-    // set 'now'
 }
 
 Updater::NumNodesAndEdges Updater::LoadAndUpdateEdgeExpandedGraph() const
