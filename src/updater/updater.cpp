@@ -371,6 +371,41 @@ void saveDatasourcesNames(const UpdaterConfig &config)
     extractor::files::writeDatasources(config.datasource_names_path, sources);
 }
 
+bool Updater::ValidateTurn(const Timezoner &tz_handler,
+                      const extractor::InputRestrictionContainer &restriction) const
+{
+    // get restriction's lon/lat coords
+    const auto via_node = internal_to_external_node_map[restriction.restriction.via];
+    const auto &location = osmium::Location{via_node.lon, via_node.lat};
+    const auto &restriction = restriction.condition;
+
+    // Get local time of the restriction
+    const auto &local_time = tz_handler(point_t{location.lon(), location.lat()});
+
+    // TODO: check restriction type [:<transportation mode>][:<direction>]
+    // http://wiki.openstreetmap.org/wiki/Conditional_restrictions#Tagging
+
+    // TODO: parsing will fail for combined conditions, e.g. Sa-Su AND weight>7
+    // http://wiki.openstreetmap.org/wiki/Conditional_restrictions#Combined_conditions:_AND
+
+    const auto &opening_hours = osrm::util::ParseOpeningHours(restriction.condition);
+
+    if (opening_hours.empty())
+    {
+        osrm::util::Log(logWARNING)
+            << "Condition parsing failed for \"" << restriction.condition << "\" at the turn "
+            << restriction.from << " -> " << restriction.via << " -> " << restriction.to;
+        return false;
+    }
+
+    if (osrm::util::CheckOpeningHours(opening_hours, local_time))
+    {
+        return true;
+        //output_stream << restriction.from << "," << restriction.via << "," << restriction.to
+        //              << "," << restriction_value << "\n";
+    }
+};
+
 std::vector<std::uint64_t>
 updateTurnPenalties(const UpdaterConfig &config,
                     const extractor::ProfileProperties &profile_properties,
@@ -389,6 +424,9 @@ updateTurnPenalties(const UpdaterConfig &config,
         reinterpret_cast<const extractor::lookup::TurnIndexBlock *>(
             turn_penalties_index_region.get_address());
     BOOST_ASSERT(is_aligned<extractor::lookup::TurnIndexBlock>(turn_index_blocks));
+
+    // initialize class that handles time zone resolution
+    Timezoner TimeZoneHandler(tz_file);
 
     // Get the turn penalty and update to the new value if required
     std::vector<std::uint64_t> updated_turns;
@@ -416,8 +454,8 @@ updateTurnPenalties(const UpdaterConfig &config,
         {
             // if it is found and the turn is valid for `now`, set turn_weight_penalties[edge_index]
             // to INVALID and continue
-            if (ValidateTurn(found_conditional))
-               turn_weight_penalties[edge_index] = INVALID_TURN_PENALTY;
+            if (ValidateTurn(TimeZoneHandler, found_conditional))
+                turn_weight_penalties[edge_index] = INVALID_TURN_PENALTY;
         }
         if (auto value = turn_penalty_lookup(osm_turn))
         {
