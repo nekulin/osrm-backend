@@ -1,8 +1,8 @@
 #ifndef OSRM_UPDATER_UPDATER_HPP
 #define OSRM_UPDATER_UPDATER_HPP
 
-#include "conditionals/extract-conditionals.hpp"
 #include "updater/updater_config.hpp"
+#include "util/timezones.hpp"
 
 #include "extractor/edge_based_edge.hpp"
 #include "extractor/query_node.hpp"
@@ -13,6 +13,7 @@
 #include <boost/geometry/index/rtree.hpp>
 
 #include <vector>
+#include <chrono>
 
 namespace osrm
 {

@@ -524,6 +524,11 @@ else()
     ENDIF()
   ENDIF()
 
+  find_package(Shapefile) # package libshp-dev
+  if(SHAPEFILE_FOUND)
+    add_dependency_includes(${LIBSHAPEFILE_LIBRARY})
+  endif()
+
   set(USED_LUA_LIBRARIES ${LUA_LIBRARIES})
   add_dependency_includes(${LUA_INCLUDE_DIR})
 
@@ -633,11 +638,15 @@ set(CUSTOMIZER_LIBRARIES
     ${MAYBE_RT_LIBRARY}
     ${MAYBE_COVERAGE_LIBRARIES})
 set(UPDATER_LIBRARIES
+    ${BZIP2_LIBRARIES}
     ${BOOST_BASE_LIBRARIES}
     ${CMAKE_THREAD_LIBS_INIT}
+    ${EXPAT_LIBRARIES}
     ${TBB_LIBRARIES}
+    ${LIBSHAPEFILE_LIBRARY}
     ${MAYBE_RT_LIBRARY}
-    ${MAYBE_COVERAGE_LIBRARIES})
+    ${MAYBE_COVERAGE_LIBRARIES}
+    ${ZLIB_LIBRARY})
 set(CONTRACTOR_LIBRARIES
     ${BOOST_BASE_LIBRARIES}
     ${CMAKE_THREAD_LIBS_INIT}
@@ -686,7 +695,6 @@ if(BUILD_TOOLS)
 
   install(TARGETS osrm-io-benchmark DESTINATION bin)
 
-  find_package(Shapefile) # package libshp-dev
   if(SHAPEFILE_FOUND AND (Boost_VERSION VERSION_GREATER 106000 OR ENABLE_MASON))
     add_executable(osrm-extract-conditionals src/tools/extract-conditionals.cpp $<TARGET_OBJECTS:UTIL>)
     target_include_directories(osrm-extract-conditionals PRIVATE ${LIBSHAPEFILE_INCLUDE_DIR})
