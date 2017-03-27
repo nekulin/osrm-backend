@@ -1,5 +1,4 @@
 #include "updater/updater.hpp"
-
 #include "updater/csv_source.hpp"
 
 #include "extractor/compressed_edge_container.hpp"
@@ -21,6 +20,7 @@
 #include "util/string_util.hpp"
 #include "util/timing_util.hpp"
 #include "util/typedefs.hpp"
+#include "util/opening_hours.hpp"
 
 #include <boost/assert.hpp>
 #include <boost/filesystem/fstream.hpp>
@@ -371,16 +371,18 @@ void saveDatasourcesNames(const UpdaterConfig &config)
     extractor::files::writeDatasources(config.datasource_names_path, sources);
 }
 
-bool Updater::ValidateTurn(const Timezoner &tz_handler,
-                      const extractor::InputRestrictionContainer &restriction) const
+bool ValidateTurn(const Timezoner &tz_handler,
+                  const extractor::InputRestrictionContainer &turn,
+                  const std::vector<extractor::QueryNode> &internal_to_external_node_map)
 {
     // get restriction's lon/lat coords
-    const auto via_node = internal_to_external_node_map[restriction.restriction.via];
-    const auto &location = osmium::Location{via_node.lon, via_node.lat};
-    const auto &restriction = restriction.condition;
+    const auto via_node = internal_to_external_node_map[turn.restriction.via.node];
+    const auto &lon = static_cast<int32_t>(via_node.lon);
+    const auto &lat = static_cast<int32_t>(via_node.lat);
+    const auto &condition = turn.restriction.condition;
 
     // Get local time of the restriction
-    const auto &local_time = tz_handler(point_t{location.lon(), location.lat()});
+    const auto &local_time = tz_handler.GetLocalTime(point_t{lon, lat});
 
     // TODO: check restriction type [:<transportation mode>][:<direction>]
     // http://wiki.openstreetmap.org/wiki/Conditional_restrictions#Tagging
@@ -388,23 +390,24 @@ bool Updater::ValidateTurn(const Timezoner &tz_handler,
     // TODO: parsing will fail for combined conditions, e.g. Sa-Su AND weight>7
     // http://wiki.openstreetmap.org/wiki/Conditional_restrictions#Combined_conditions:_AND
 
-    const auto &opening_hours = osrm::util::ParseOpeningHours(restriction.condition);
+    const auto &opening_hours = util::ParseOpeningHours(condition);
 
     if (opening_hours.empty())
     {
-        osrm::util::Log(logWARNING)
-            << "Condition parsing failed for \"" << restriction.condition << "\" at the turn "
-            << restriction.from << " -> " << restriction.via << " -> " << restriction.to;
+        osrm::util::Log(logWARNING) << "Condition parsing failed for \"" << condition
+                                    << "\" at the turn " << turn.restriction.from.way << " -> "
+                                    << turn.restriction.via.node << " -> " << turn.restriction.to.way;
         return false;
     }
 
     if (osrm::util::CheckOpeningHours(opening_hours, local_time))
     {
         return true;
-        //output_stream << restriction.from << "," << restriction.via << "," << restriction.to
+        // output_stream << restriction.from << "," << restriction.via << "," << restriction.to
         //              << "," << restriction_value << "\n";
     }
-};
+    return false;
+}
 
 std::vector<std::uint64_t>
 updateTurnPenalties(const UpdaterConfig &config,
@@ -426,7 +429,8 @@ updateTurnPenalties(const UpdaterConfig &config,
     BOOST_ASSERT(is_aligned<extractor::lookup::TurnIndexBlock>(turn_index_blocks));
 
     // initialize class that handles time zone resolution
-    Timezoner TimeZoneHandler(tz_file);
+    // TODO put this behind conditional turn flags
+    Timezoner TimeZoneHandler(config.tz_file_path);
 
     // Get the turn penalty and update to the new value if required
     std::vector<std::uint64_t> updated_turns;
@@ -448,13 +452,14 @@ updateTurnPenalties(const UpdaterConfig &config,
                        internal_turn.via_id == lhs.restriction.via.node &&
                        internal_turn.to_id == lhs.restriction.to.node;
             };
+        // TODO put this behind conditional turn flags
         const auto found_conditional =
             find_if(begin(conditional_turns), end(conditional_turns), FindTurnEdge);
         if (found_conditional != conditional_turns.end())
         {
             // if it is found and the turn is valid for `now`, set turn_weight_penalties[edge_index]
             // to INVALID and continue
-            if (ValidateTurn(TimeZoneHandler, found_conditional))
+            if (ValidateTurn(TimeZoneHandler, *found_conditional, internal_to_external_node_map))
                 turn_weight_penalties[edge_index] = INVALID_TURN_PENALTY;
         }
         if (auto value = turn_penalty_lookup(osm_turn))

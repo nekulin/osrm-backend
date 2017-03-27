@@ -282,7 +282,7 @@ int SpeedLimitsDumpCommand(const char *executable, const std::vector<std::string
 // Function loads time zone shape polygons, computes a zone local time for utc_time,
 // creates a lookup R-tree and returns a lambda function that maps a point
 // to the corresponding local time
-auto LoadLocalTimesRTree(const std::string &tz_shapes_filename, std::time_t utc_time)
+std::function<struct tm(const point_t &)> LoadLocalTimesRTree(const std::string &tz_shapes_filename, std::time_t utc_time)
 {
     // Load time zones shapes and collect local times of utc_time
     auto shphandle = SHPOpen(tz_shapes_filename.c_str(), "rb");
