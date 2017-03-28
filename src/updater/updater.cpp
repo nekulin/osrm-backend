@@ -1,5 +1,5 @@
-#include "updater/updater.hpp"
 #include "updater/csv_source.hpp"
+#include "updater/updater.hpp"
 
 #include "extractor/compressed_edge_container.hpp"
 #include "extractor/edge_based_graph_factory.hpp"
@@ -15,12 +15,12 @@
 #include "util/graph_loader.hpp"
 #include "util/integer_range.hpp"
 #include "util/log.hpp"
+#include "util/opening_hours.hpp"
 #include "util/static_graph.hpp"
 #include "util/static_rtree.hpp"
 #include "util/string_util.hpp"
 #include "util/timing_util.hpp"
 #include "util/typedefs.hpp"
-#include "util/opening_hours.hpp"
 
 #include <boost/assert.hpp>
 #include <boost/filesystem/fstream.hpp>
@@ -396,7 +396,8 @@ bool ValidateTurn(const Timezoner &tz_handler,
     {
         osrm::util::Log(logWARNING) << "Condition parsing failed for \"" << condition
                                     << "\" at the turn " << turn.restriction.from.way << " -> "
-                                    << turn.restriction.via.node << " -> " << turn.restriction.to.way;
+                                    << turn.restriction.via.node << " -> "
+                                    << turn.restriction.to.way;
         return false;
     }
 
@@ -409,14 +410,14 @@ bool ValidateTurn(const Timezoner &tz_handler,
     return false;
 }
 
-std::vector<std::uint64_t>
-updateTurnPenalties(const UpdaterConfig &config,
-                    const extractor::ProfileProperties &profile_properties,
-                    const TurnLookupTable &turn_penalty_lookup,
-                    std::vector<TurnPenalty> &turn_weight_penalties,
-                    std::vector<TurnPenalty> &turn_duration_penalties,
-                    std::vector<extractor::InputRestrictionContainer> &conditional_turns,
-                    const std::vector<extractor::QueryNode> &internal_to_external_node_map)
+std::vector<std::uint64_t> updateTurnPenalties(
+    const UpdaterConfig &config,
+    const extractor::ProfileProperties &profile_properties,
+    const TurnLookupTable &turn_penalty_lookup,
+    std::vector<TurnPenalty> &turn_weight_penalties,
+    std::vector<TurnPenalty> &turn_duration_penalties,
+    boost::optional<std::vector<extractor::InputRestrictionContainer>> &conditional_turns,
+    const std::vector<extractor::QueryNode> &internal_to_external_node_map)
 {
     const auto weight_multiplier = profile_properties.GetWeightMultiplier();
     const auto turn_penalties_index_region =
@@ -429,8 +430,8 @@ updateTurnPenalties(const UpdaterConfig &config,
     BOOST_ASSERT(is_aligned<extractor::lookup::TurnIndexBlock>(turn_index_blocks));
 
     // initialize class that handles time zone resolution
-    // TODO put this behind conditional turn flags
-    Timezoner TimeZoneHandler(config.tz_file_path);
+    if (conditional_turns)
+        Timezoner TimeZoneHandler(config.tz_file_path);
 
     // Get the turn penalty and update to the new value if required
     std::vector<std::uint64_t> updated_turns;
@@ -445,23 +446,6 @@ updateTurnPenalties(const UpdaterConfig &config,
         auto turn_weight_penalty = turn_weight_penalties[edge_index];
         auto turn_duration_penalty = turn_duration_penalties[edge_index];
 
-        // first try and find the turn in question in the conditional turns vector
-        const auto FindTurnEdge =
-            [&internal_turn](const extractor::InputRestrictionContainer &lhs) {
-                return internal_turn.from_id == lhs.restriction.from.node &&
-                       internal_turn.via_id == lhs.restriction.via.node &&
-                       internal_turn.to_id == lhs.restriction.to.node;
-            };
-        // TODO put this behind conditional turn flags
-        const auto found_conditional =
-            find_if(begin(conditional_turns), end(conditional_turns), FindTurnEdge);
-        if (found_conditional != conditional_turns.end())
-        {
-            // if it is found and the turn is valid for `now`, set turn_weight_penalties[edge_index]
-            // to INVALID and continue
-            if (ValidateTurn(TimeZoneHandler, *found_conditional, internal_to_external_node_map))
-                turn_weight_penalties[edge_index] = INVALID_TURN_PENALTY;
-        }
         if (auto value = turn_penalty_lookup(osm_turn))
         {
             turn_duration_penalty =
@@ -473,6 +457,23 @@ updateTurnPenalties(const UpdaterConfig &config,
             turn_duration_penalties[edge_index] = turn_duration_penalty;
             turn_weight_penalties[edge_index] = turn_weight_penalty;
             updated_turns.push_back(edge_index);
+        }
+        if (conditional_turns)
+        {
+            // lambda for finding turns in conditional turn restrictions
+            const auto FindTurnEdge = [&internal_turn](const extractor::InputRestrictionContainer &lhs) {
+                return internal_turn.from_id == lhs.restriction.from.node &&
+                       internal_turn.via_id == lhs.restriction.via.node &&
+                       internal_turn.to_id == lhs.restriction.to.node;
+            };
+            const auto found_conditional =
+                find_if(begin(*conditional_turns), end(*conditional_turns), FindTurnEdge);
+            if (found_conditional != end(*conditional_turns))
+            {
+                if (ValidateTurn(
+                        TimeZoneHandler, *found_conditional, internal_to_external_node_map))
+                    turn_weight_penalties[edge_index] = INVALID_TURN_PENALTY;
+            }
         }
 
         if (turn_weight_penalty < 0)
@@ -518,14 +519,15 @@ EdgeID Updater::LoadAndUpdateEdgeExpandedGraph(
         nodes_file.DeserializeVector(internal_to_external_node_map);
     }
 
-    const bool update_conditional_turns = !config.turn_restrictions_path.empty();
+    const bool update_conditional_turns =
+        !config.turn_restrictions_path.empty() && !config.tz_file_path.empty();
     const bool update_edge_weights = !config.segment_speed_lookup_paths.empty();
     const bool update_turn_penalties = !config.turn_penalty_lookup_paths.empty();
 
-    std::vector<extractor::InputRestrictionContainer> conditional_turns;
+    boost::optional<std::vector<extractor::InputRestrictionContainer>> conditional_turns;
     if (update_conditional_turns)
     {
-        extractor::io::read(config.turn_restrictions_path, conditional_turns);
+        extractor::io::read(config.turn_restrictions_path, *conditional_turns);
     }
 
     if (!update_edge_weights && !update_turn_penalties)
