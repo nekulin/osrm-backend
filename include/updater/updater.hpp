@@ -22,6 +22,7 @@ namespace updater
 class Timezoner
 {
     public:
+        Timezoner() = default;
         Timezoner(std::string tz_filename)
         {
             std::time_t utc_time_now =

@@ -174,9 +174,6 @@ RestrictionParser::TryParse(const osmium::Relation &relation) const
         }
     }
 
-    // push back a copy of turn restriction
-    parsed_restrictions.push_back(boost::make_optional(restriction_container));
-
     // parse conditional tags
     if (parse_conditionals)
     {
@@ -197,11 +194,16 @@ RestrictionParser::TryParse(const osmium::Relation &relation) const
 
             for (auto &p : parsed)
             {
-                restriction_container.restriction.condition = p.condition;
-                parsed_restrictions.push_back(boost::make_optional(restriction_container));
+                std::vector<util::OpeningHours> parsed = util::ParseOpeningHours(p.condition);
+                if (!parsed.empty())
+                    restriction_container.restriction.condition = std::move(parsed);
             }
         }
     }
+
+    // push back a copy of turn restriction
+    parsed_restrictions.push_back(boost::make_optional(restriction_container));
+
     return std::move(parsed_restrictions);
 }
 
