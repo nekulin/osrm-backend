@@ -525,8 +525,8 @@ else()
   ENDIF()
 
   find_package(Shapefile) # package libshp-dev
-  if(SHAPEFILE_FOUND)
-    add_dependency_includes(${LIBSHAPEFILE_LIBRARY})
+  if(NOT SHAPEFILE_FOUND)
+    message(FATAL_ERROR "Shapefile library (libshp-dev) was not found")
   endif()
 
   set(USED_LUA_LIBRARIES ${LUA_LIBRARIES})
@@ -605,12 +605,12 @@ set(BOOST_ENGINE_LIBRARIES
   ${BOOST_BASE_LIBRARIES})
 
 # Binaries
-target_link_libraries(osrm-datastore osrm_store ${Boost_PROGRAM_OPTIONS_LIBRARY})
+target_link_libraries(osrm-datastore osrm_store ${Boost_PROGRAM_OPTIONS_LIBRARY} ${LIBSHAPEFILE_LIBRARY})
 target_link_libraries(osrm-extract osrm_extract ${Boost_PROGRAM_OPTIONS_LIBRARY})
 target_link_libraries(osrm-partition osrm_partition ${Boost_PROGRAM_OPTIONS_LIBRARY})
 target_link_libraries(osrm-customize osrm_customize ${Boost_PROGRAM_OPTIONS_LIBRARY})
 target_link_libraries(osrm-contract osrm_contract ${Boost_PROGRAM_OPTIONS_LIBRARY})
-target_link_libraries(osrm-routed osrm ${Boost_PROGRAM_OPTIONS_LIBRARY} ${OPTIONAL_SOCKET_LIBS} ${ZLIB_LIBRARY})
+target_link_libraries(osrm-routed osrm ${Boost_PROGRAM_OPTIONS_LIBRARY} ${LIBSHAPEFILE_LIBRARY} ${OPTIONAL_SOCKET_LIBS} ${ZLIB_LIBRARY})
 
 set(EXTRACTOR_LIBRARIES
     ${BZIP2_LIBRARIES}
@@ -674,6 +674,8 @@ set(UTIL_LIBRARIES
     ${STXXL_LIBRARY}
     ${TBB_LIBRARIES}
     ${MAYBE_COVERAGE_LIBRARIES})
+# Include paths
+target_include_directories(UTIL PRIVATE ${LIBSHAPEFILE_INCLUDE_DIR})
 # Libraries
 target_link_libraries(osrm ${ENGINE_LIBRARIES})
 target_link_libraries(osrm_update ${UPDATER_LIBRARIES})
@@ -685,13 +687,13 @@ target_link_libraries(osrm_store ${STORAGE_LIBRARIES})
 
 # BUILD_COMPONENTS
 add_executable(osrm-components src/tools/components.cpp $<TARGET_OBJECTS:UTIL>)
-target_link_libraries(osrm-components ${TBB_LIBRARIES} ${BOOST_BASE_LIBRARIES})
+target_link_libraries(osrm-components ${TBB_LIBRARIES} ${BOOST_BASE_LIBRARIES} ${LIBSHAPEFILE_LIBRARY})
 install(TARGETS osrm-components DESTINATION bin)
 
 if(BUILD_TOOLS)
   message(STATUS "Activating OSRM internal tools")
   add_executable(osrm-io-benchmark src/tools/io-benchmark.cpp $<TARGET_OBJECTS:UTIL>)
-  target_link_libraries(osrm-io-benchmark ${BOOST_BASE_LIBRARIES})
+  target_link_libraries(osrm-io-benchmark ${BOOST_BASE_LIBRARIES} ${LIBSHAPEFILE_LIBRARY})
 
   install(TARGETS osrm-io-benchmark DESTINATION bin)
 
