@@ -177,10 +177,14 @@ RestrictionParser::TryParse(const osmium::Relation &relation) const
     // parse conditional tags
     if (parse_conditionals)
     {
+        osmium::tags::KeyFilter::iterator fi_begin(filter, tag_list.begin(), tag_list.end());
+        osmium::tags::KeyFilter::iterator fi_end(filter, tag_list.end(), tag_list.end());
         for (; fi_begin != fi_end; ++fi_begin)
         {
+            const std::string key(fi_begin->key());
+            const std::string value(fi_begin->value());
             // Parse condition and add independent value/condition pairs
-            const auto &parsed = osrm::util::ParseConditionalRestrictions(fi_begin->value());
+            const auto &parsed = osrm::util::ParseConditionalRestrictions(value);
 
             if (parsed.empty())
             {
