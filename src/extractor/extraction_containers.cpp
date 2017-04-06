@@ -634,7 +634,7 @@ void ExtractionContainers::WriteRestrictions(const std::string &path)
     storage::io::FileWriter restrictions_out_file(path,
                                                   storage::io::FileWriter::GenerateFingerprint);
 
-    restrictions_out_file.WriteElementCount32(written_restriction_count);
+    restrictions_out_file.WriteElementCount64(written_restriction_count);
 
     for (const auto &restriction_container : restrictions_list)
     {

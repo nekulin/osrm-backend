@@ -1,3 +1,6 @@
+#ifndef TIMEZONES_HPP
+#define TIMEZONES_HPP
+
 #include <boost/geometry.hpp>
 #include <boost/geometry/index/rtree.hpp>
 
@@ -14,3 +17,5 @@ using local_time_t = std::pair<polygon_t, struct tm>;
 
 std::function<struct tm(const point_t &)> LoadLocalTimesRTree(const std::string &tz_shapes_filename,
                                                               std::time_t utc_time);
+
+#endif

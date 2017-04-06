@@ -1,3 +1,6 @@
+#ifndef EXTRACT_CONDITIONALS_HPP
+#define EXTRACT_CONDITIONALS_HPP
+
 #include "util/conditional_restrictions.hpp"
 #include "util/for_each_pair.hpp"
 #include "util/log.hpp"
@@ -382,3 +385,5 @@ class ConditionalSpeedLimitsCollector : public osmium::handler::Handler
     std::vector<ConditionalSpeedLimit> speed_limits;
     index_type location_storage;
 };
+
+#endif EXTRACT_CONDITIONALS_HPP

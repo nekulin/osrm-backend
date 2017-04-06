@@ -30,13 +30,6 @@ class Timezoner
             // Load R-tree with local times - returns a lambda that finds the local time of a timezone
             GetLocalTime = LoadLocalTimesRTree(tz_filename, utc_time_now);
         };
-        using point_t = boost::geometry::model::
-            point<int32_t, 2, boost::geometry::cs::spherical_equatorial<boost::geometry::degree>>;
-        using polygon_t = boost::geometry::model::polygon<point_t>;
-        using box_t = boost::geometry::model::box<point_t>;
-        using rtree_t =
-            boost::geometry::index::rtree<std::pair<box_t, size_t>, boost::geometry::index::rstar<8>>;
-        using local_time_t = std::pair<polygon_t, struct tm>;
 
         std::function<struct tm(const point_t &)> GetLocalTime;
     private:
