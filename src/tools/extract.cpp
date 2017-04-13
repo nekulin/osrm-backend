@@ -53,6 +53,7 @@ return_code parseArguments(int argc, char *argv[], extractor::ExtractorConfig &e
         "Use metadata during osm parsing (This can affect the extraction performance).")(
         "parse-conditional-restrictions",
         boost::program_options::value<bool>(&extractor_config.parse_conditionals)
+            ->implicit_value(true)
             ->default_value(false),
         "Save conditional restrictions found during extraction to disk for use "
         "during contraction");
