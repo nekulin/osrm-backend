@@ -28,6 +28,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <limits>
 #include <memory>
 #include <queue>
@@ -102,20 +103,20 @@ class StaticRTree
     static_assert(sizeof(LeafNode) == LEAF_PAGE_SIZE, "LeafNode size does not fit the page size");
 
   private:
-    struct WrappedInputElement
+    struct HilbertInputElement
     {
-        explicit WrappedInputElement(const uint64_t _hilbert_value,
+        explicit HilbertInputElement(const uint64_t _hilbert_value,
                                      const std::uint32_t _array_index)
             : m_hilbert_value(_hilbert_value), m_array_index(_array_index)
         {
         }
 
-        WrappedInputElement() : m_hilbert_value(0), m_array_index(UINT_MAX) {}
+        HilbertInputElement() : m_hilbert_value(0), m_array_index(UINT_MAX) {}
 
         uint64_t m_hilbert_value;
         std::uint32_t m_array_index;
 
-        inline bool operator<(const WrappedInputElement &other) const
+        inline bool operator<(const HilbertInputElement &other) const
         {
             return m_hilbert_value < other.m_hilbert_value;
         }
@@ -166,15 +167,245 @@ class StaticRTree
     StaticRTree(const StaticRTree &) = delete;
     StaticRTree &operator=(const StaticRTree &) = delete;
 
-    // Construct a packed Hilbert-R-Tree with Kamel-Faloutsos algorithm [1]
+    enum PackingMethod
+    {
+        Hilbert,
+        STR
+    };
+
     explicit StaticRTree(const std::vector<EdgeDataT> &input_data_vector,
                          const std::string &tree_node_filename,
                          const std::string &leaf_node_filename,
-                         const Vector<Coordinate> &coordinate_list)
+                         const Vector<Coordinate> &coordinate_list,
+                         const PackingMethod packing_method = Hilbert)
         : m_coordinate_list(coordinate_list)
     {
+        util::Log() << "Starting rtree";
+        switch (packing_method)
+        {
+        case Hilbert:
+            PackWithHilbert(input_data_vector, tree_node_filename, leaf_node_filename);
+            break;
+        case STR:
+            PackWithSTR(input_data_vector, tree_node_filename, leaf_node_filename);
+            break;
+        default:
+            PackWithHilbert(input_data_vector, tree_node_filename, leaf_node_filename);
+        }
+    }
+
+    // Construct a packed STR-RTree with the Luetengger-Edgington-Lopez approach
+    // STR performs better than Hilbert for road-network-like data where the
+    // distribution is only mildly biased
+    void PackWithSTR(const std::vector<EdgeDataT> &input_data_vector,
+                     const std::string &tree_node_filename,
+                     const std::string &leaf_node_filename)
+    {
+        util::Log() << "Packing with STR";
+        auto copy = const_cast<std::vector<EdgeDataT> &>(input_data_vector);
+        //        copy.reserve(input_data_vector.size());
+        // std::copy(input_data_vector.begin(), input_data_vector.end(), copy);
+
+        // Sort by longitude coordinate of centroid for each segment
+        // TODO: this means calculating centroids a lot, this could be moved into
+        // a separate single pass
+        util::Log() << "Sorting leaves by centroid longitude";
+        tbb::parallel_sort(
+            copy.begin(), copy.end(), [this](const EdgeDataT &a, const EdgeDataT &b) {
+                auto a_centroid = coordinate_calculation::centroid(m_coordinate_list[a.u],
+                                                                   m_coordinate_list[a.v]);
+                auto b_centroid = coordinate_calculation::centroid(m_coordinate_list[b.u],
+                                                                   m_coordinate_list[b.v]);
+                return a_centroid.lon < b_centroid.lon;
+
+            });
+
+        // Now, break into even-sized vertical slices, and sort each slice by latitude
+        // TODO: make sure this isn't 0
+        const std::size_t leaf_K = std::sqrt(copy.size() / LEAF_NODE_SIZE);
+        util::Log() << "leaf_K is " << leaf_K;
+        tbb::parallel_for(tbb::blocked_range<uint64_t>(0, copy.size(), leaf_K),
+                          [&copy, this](const tbb::blocked_range<uint64_t> &range) {
+                              util::Log() << "Sorting vertical leaf slice " << range.begin() << "-"
+                                          << range.end();
+                              tbb::parallel_sort(
+                                  copy.begin() + range.begin(),
+                                  copy.begin() + range.end(),
+                                  [this](const EdgeDataT &a, const EdgeDataT &b) {
+                                      auto a_centroid = coordinate_calculation::centroid(
+                                          m_coordinate_list[a.u], m_coordinate_list[a.v]);
+                                      auto b_centroid = coordinate_calculation::centroid(
+                                          m_coordinate_list[b.u], m_coordinate_list[b.v]);
+                                      return a_centroid.lat < b_centroid.lat;
+                                  });
+                          });
+
+        // open leaf file
+        boost::filesystem::ofstream leaf_node_file(leaf_node_filename, std::ios::binary);
+        std::vector<TreeNode> tree_nodes_in_level;
+
+        // pack M elements into leaf node, write to leaf file and add child index to the parent node
+        uint64_t wrapped_element_index = 0;
+        for (std::uint32_t node_index = 0; wrapped_element_index < copy.size(); ++node_index)
+        {
+            TreeNode current_node;
+            for (std::uint32_t leaf_index = 0;
+                 leaf_index < BRANCHING_FACTOR && wrapped_element_index < copy.size();
+                 ++leaf_index)
+            {
+                LeafNode current_leaf;
+                Rectangle &rectangle = current_leaf.minimum_bounding_rectangle;
+                for (std::uint32_t object_index = 0;
+                     object_index < LEAF_NODE_SIZE && wrapped_element_index < copy.size();
+                     ++object_index, ++wrapped_element_index)
+                {
+                    const auto &object = copy[wrapped_element_index];
+
+                    current_leaf.object_count += 1;
+                    current_leaf.objects[object_index] = object;
+
+                    Coordinate projected_u{
+                        web_mercator::fromWGS84(Coordinate{m_coordinate_list[object.u]})};
+                    Coordinate projected_v{
+                        web_mercator::fromWGS84(Coordinate{m_coordinate_list[object.v]})};
+
+                    BOOST_ASSERT(std::abs(toFloating(projected_u.lon).operator double()) <= 180.);
+                    BOOST_ASSERT(std::abs(toFloating(projected_u.lat).operator double()) <= 180.);
+                    BOOST_ASSERT(std::abs(toFloating(projected_v.lon).operator double()) <= 180.);
+                    BOOST_ASSERT(std::abs(toFloating(projected_v.lat).operator double()) <= 180.);
+
+                    rectangle.min_lon =
+                        std::min(rectangle.min_lon, std::min(projected_u.lon, projected_v.lon));
+                    rectangle.max_lon =
+                        std::max(rectangle.max_lon, std::max(projected_u.lon, projected_v.lon));
+
+                    rectangle.min_lat =
+                        std::min(rectangle.min_lat, std::min(projected_u.lat, projected_v.lat));
+                    rectangle.max_lat =
+                        std::max(rectangle.max_lat, std::max(projected_u.lat, projected_v.lat));
+
+                    BOOST_ASSERT(rectangle.IsValid());
+                }
+
+                // append the leaf node to the current tree node
+                current_node.child_count += 1;
+                current_node.children[leaf_index] =
+                    TreeIndex{node_index * BRANCHING_FACTOR + leaf_index, true};
+                current_node.minimum_bounding_rectangle.MergeBoundingBoxes(
+                    current_leaf.minimum_bounding_rectangle);
+
+                // write leaf_node to leaf node file
+                leaf_node_file.write((char *)&current_leaf, sizeof(current_leaf));
+            }
+
+            tree_nodes_in_level.emplace_back(current_node);
+        }
+        leaf_node_file.flush();
+        leaf_node_file.close();
+        util::Log(logINFO) << "There are " << tree_nodes_in_level.size() << " tree nodes now";
+
+        // Now, repeat the STR lon/lat sorting until we reach the root node
+        std::uint32_t processing_level = 0;
+        while (tree_nodes_in_level.size() > 1)
+        {
+            // Sort boxes by centroid longitude
+            tbb::parallel_sort(tree_nodes_in_level.begin(),
+                               tree_nodes_in_level.end(),
+                               [](const TreeNode &a, const TreeNode &b) {
+                                   return a.minimum_bounding_rectangle.Centroid().lon <
+                                          b.minimum_bounding_rectangle.Centroid().lon;
+                               });
+
+            // Now, break into even-sized vertical slices, and sort each slice by latitude
+            const std::size_t tree_K = std::sqrt(tree_nodes_in_level.size() / BRANCHING_FACTOR);
+            tbb::parallel_for(tbb::blocked_range<uint64_t>(0, tree_nodes_in_level.size(), tree_K),
+                              [&](const tbb::blocked_range<uint64_t> &range) {
+                                  tbb::parallel_sort(
+                                      tree_nodes_in_level.begin() + range.begin(),
+                                      tree_nodes_in_level.begin() + range.end(),
+                                      [this](const TreeNode &a, const TreeNode &b) {
+                                          return a.minimum_bounding_rectangle.Centroid().lat <
+                                                 b.minimum_bounding_rectangle.Centroid().lat;
+                                      });
+                              });
+
+            std::vector<TreeNode> tree_nodes_in_next_level;
+            std::uint32_t processed_tree_nodes_in_level = 0;
+            while (processed_tree_nodes_in_level < tree_nodes_in_level.size())
+            {
+                TreeNode parent_node;
+                // pack BRANCHING_FACTOR elements into tree_nodes each
+                for (std::uint32_t current_child_node_index = 0;
+                     current_child_node_index < BRANCHING_FACTOR;
+                     ++current_child_node_index)
+                {
+                    if (processed_tree_nodes_in_level < tree_nodes_in_level.size())
+                    {
+                        TreeNode &current_child_node =
+                            tree_nodes_in_level[processed_tree_nodes_in_level];
+                        // add tree node to parent entry
+                        parent_node.children[current_child_node_index] =
+                            TreeIndex{m_search_tree.size(), false};
+                        m_search_tree.emplace_back(current_child_node);
+                        // merge MBRs
+                        parent_node.minimum_bounding_rectangle.MergeBoundingBoxes(
+                            current_child_node.minimum_bounding_rectangle);
+                        // increase counters
+                        ++parent_node.child_count;
+                        ++processed_tree_nodes_in_level;
+                    }
+                }
+                tree_nodes_in_next_level.emplace_back(parent_node);
+            }
+            tree_nodes_in_level.swap(tree_nodes_in_next_level);
+            ++processing_level;
+        }
+        BOOST_ASSERT_MSG(tree_nodes_in_level.size() == 1, "tree broken, more than one root node");
+        // last remaining entry is the root node, store it
+        m_search_tree.emplace_back(tree_nodes_in_level[0]);
+        util::Log() << "Tree is " << processing_level << " deep";
+
+        // reverse and renumber tree to have root at index 0
+        std::reverse(m_search_tree.begin(), m_search_tree.end());
+        std::uint32_t search_tree_size = m_search_tree.size();
+        tbb::parallel_for(
+            tbb::blocked_range<std::uint32_t>(0, search_tree_size),
+            [this, &search_tree_size](const tbb::blocked_range<std::uint32_t> &range) {
+                for (std::uint32_t i = range.begin(), end = range.end(); i != end; ++i)
+                {
+                    TreeNode &current_tree_node = this->m_search_tree[i];
+                    for (std::uint32_t j = 0; j < current_tree_node.child_count; ++j)
+                    {
+                        if (!current_tree_node.children[j].is_leaf)
+                        {
+                            const std::uint32_t old_id = current_tree_node.children[j].index;
+                            const std::uint32_t new_id = search_tree_size - old_id - 1;
+                            current_tree_node.children[j].index = new_id;
+                        }
+                    }
+                }
+            });
+
+        // open tree file
+        storage::io::FileWriter tree_node_file(tree_node_filename,
+                                               storage::io::FileWriter::HasNoFingerprint);
+
+        std::uint64_t size_of_tree = m_search_tree.size();
+        BOOST_ASSERT_MSG(0 < size_of_tree, "tree empty");
+
+        tree_node_file.WriteOne(size_of_tree);
+        tree_node_file.WriteFrom(&m_search_tree[0], size_of_tree);
+
+        MapLeafNodesFile(leaf_node_filename);
+    }
+
+    // Construct a packed Hilbert-R-Tree with Kamel-Faloutsos algorithm [1]
+    void PackWithHilbert(const std::vector<EdgeDataT> &input_data_vector,
+                         const std::string &tree_node_filename,
+                         const std::string &leaf_node_filename)
+    {
         const uint64_t element_count = input_data_vector.size();
-        std::vector<WrappedInputElement> input_wrapper_vector(element_count);
+        std::vector<HilbertInputElement> input_wrapper_vector(element_count);
 
         // generate auxiliary vector of hilbert-values
         tbb::parallel_for(
@@ -185,7 +416,7 @@ class StaticRTree
                      element_counter != end;
                      ++element_counter)
                 {
-                    WrappedInputElement &current_wrapper = input_wrapper_vector[element_counter];
+                    HilbertInputElement &current_wrapper = input_wrapper_vector[element_counter];
                     current_wrapper.m_array_index = element_counter;
 
                     EdgeDataT const &current_element = input_data_vector[element_counter];
