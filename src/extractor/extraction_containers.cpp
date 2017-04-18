@@ -645,7 +645,7 @@ void ExtractionContainers::WriteRestrictions(const std::string &path)
             if (!restriction_container.restriction.condition.empty())
             {
                 // write conditional turn restrictions to disk, for use in contractor later
-                io::write(restrictions_out_file, restriction_container.restriction);
+                extractor::serialization::write(restrictions_out_file, restriction_container.restriction);
                 ++written_restriction_count;
             }
             else

@@ -392,8 +392,8 @@ void saveDatasourcesNames(const UpdaterConfig &config)
 }
 
 bool IsRestrictionValid(const Timezoner &tz_handler,
-                  const extractor::TurnRestriction &turn,
-                  const std::vector<extractor::QueryNode> &internal_to_external_node_map)
+                        const extractor::TurnRestriction &turn,
+                        const std::vector<extractor::QueryNode> &internal_to_external_node_map)
 {
     // get restriction's lon/lat coords
     const auto via_node = internal_to_external_node_map[turn.via.node];
@@ -580,7 +580,7 @@ EdgeID Updater::LoadAndUpdateEdgeExpandedGraph(
         reader.ReadInto(edge_based_edge_list);
         storage::io::FileReader nodes_file(config.node_based_graph_path,
                                            storage::io::FileReader::HasNoFingerprint);
-        nodes_file.DeserializeVector(internal_to_external_node_map);
+        storage::serialization::read(nodes_file, internal_to_external_node_map);
     }
 
     const bool update_conditional_turns =
@@ -642,7 +642,7 @@ EdgeID Updater::LoadAndUpdateEdgeExpandedGraph(
     std::vector<extractor::TurnRestriction> conditional_turns;
     if (update_conditional_turns)
     {
-        extractor::io::read(config.turn_restrictions_path, conditional_turns);
+        extractor::serialization::read(config.turn_restrictions_path, conditional_turns);
     }
 
     tbb::concurrent_vector<GeometryID> updated_segments;
@@ -675,12 +675,11 @@ EdgeID Updater::LoadAndUpdateEdgeExpandedGraph(
         updated_segments.resize(offset + updated_turn_penalties.size());
         // we need to re-compute all edges that have updated turn penalties.
         // this marks it for re-computation
-        std::transform(updated_turn_penalties.begin(),
-                       updated_turn_penalties.end(),
-                       updated_segments.begin() + offset,
-                       [&edge_data](const std::uint64_t edge_index) {
-                           return edge_data[edge_index].via_geometry;
-                       });
+        std::transform(
+            updated_turn_penalties.begin(),
+            updated_turn_penalties.end(),
+            updated_segments.begin() + offset,
+            [&turn_data](const std::uint64_t turn_id) { return turn_data.GetGeometryID(turn_id); });
     }
 
     if (update_conditional_turns)
