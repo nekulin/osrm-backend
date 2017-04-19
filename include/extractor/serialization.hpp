@@ -93,7 +93,7 @@ inline void read(const boost::filesystem::path &path, std::vector<TurnRestrictio
     storage::io::FileReader reader{path, fingerprint};
 
     auto num_indices = reader.ReadElementCount64();
-    restrictions.resize(num_indices);
+    restrictions.reserve(num_indices);
     TurnRestriction restriction;
     while (num_indices > 0)
     {
@@ -113,7 +113,7 @@ inline void read(const boost::filesystem::path &path, std::vector<TurnRestrictio
         }
         restriction.flags.is_only = is_only;
 
-        restrictions.push_back(restriction);
+        restrictions.push_back(std::move(restriction));
         num_indices--;
     }
 }

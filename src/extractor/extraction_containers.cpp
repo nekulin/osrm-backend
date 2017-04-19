@@ -651,7 +651,7 @@ void ExtractionContainers::WriteRestrictions(const std::string &path)
             else
             {
                 // save unconditional turn restriction to memory, for use in ebg later
-                unconditional_turn_restrictions.push_back(restriction_container.restriction);
+                unconditional_turn_restrictions.push_back(std::move(restriction_container.restriction));
             }
         }
     }
