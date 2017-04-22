@@ -170,14 +170,15 @@ class StaticRTree
     enum PackingMethod
     {
         Hilbert,
-        STR
+        STR,
+        OMT
     };
 
     explicit StaticRTree(const std::vector<EdgeDataT> &input_data_vector,
                          const std::string &tree_node_filename,
                          const std::string &leaf_node_filename,
                          const Vector<Coordinate> &coordinate_list,
-                         const PackingMethod packing_method = Hilbert)
+                         const PackingMethod packing_method = OMT)
         : m_coordinate_list(coordinate_list)
     {
         util::Log() << "Starting rtree";
@@ -189,9 +190,276 @@ class StaticRTree
         case STR:
             PackWithSTR(input_data_vector, tree_node_filename, leaf_node_filename);
             break;
+        case OMT:
+            PackWithOMT(input_data_vector, tree_node_filename, leaf_node_filename);
+            break;
         default:
             PackWithHilbert(input_data_vector, tree_node_filename, leaf_node_filename);
         }
+    }
+
+    // In-place partial sort-by-group
+    template <typename Iterator, typename Compare>
+    void grouped_partial_sort(Iterator left, Iterator right, std::size_t n, Compare compare)
+    {
+        std::stack<Iterator> stack;
+        stack.push(left);
+        stack.push(right);
+        Iterator mid;
+
+        while (!stack.empty())
+        {
+            right = stack.top();
+            stack.pop();
+            left = stack.top();
+            stack.pop();
+
+            if (std::distance(left, right) <= n)
+                continue;
+
+            // Important: note the use of static_cast<double>" here - we need this to be floating
+            // point math, because we depend on the "ceil" behiaviour rounding up in some
+            // circumstances.  If we left it as integer math, we'll sometimes round down, which
+            // will put us into an infinite loop.  TODO: could this be achieved with integer math
+            // and a +1 ?
+            mid = left + std::ceil(static_cast<double>(std::distance(left, right)) / n / 2.) * n;
+
+            std::partial_sort(left, mid, right, compare);
+
+            stack.push(left);
+            stack.push(mid);
+            stack.push(mid);
+            stack.push(right);
+        }
+    }
+
+    // Constructs a packed RTree with the Lee-Lee OMT approach
+    // This should minimize leaf-node overlap, which works well for the typical
+    // layout of road network geometries
+    void PackWithOMT(const std::vector<EdgeDataT> &input_data_vector,
+                     const std::string &tree_node_filename,
+                     const std::string &leaf_node_filename)
+    {
+        util::Log() << "Packing with OMT";
+        auto leaves = const_cast<std::vector<EdgeDataT> &>(input_data_vector);
+
+        struct Range
+        {
+            Range(std::size_t parent_, std::size_t left_, std::size_t right_, std::size_t height_)
+                : parent{parent_}, left{left_}, right{right_}, height{height_}
+            {
+            }
+            std::size_t parent;
+            std::size_t left;
+            std::size_t right;
+            std::size_t height;
+        };
+
+        // We use a queue here so that we can do a breadth-first
+        std::queue<Range> queue;
+        queue.emplace(0, 0, leaves.size(), 0);
+
+        // TODO: we do a lot of sorting - it would make sense to only calculate centroids once
+        auto longitude_compare = [this](const EdgeDataT &a, const EdgeDataT &b) {
+            auto a_centroid =
+                coordinate_calculation::centroid(m_coordinate_list[a.u], m_coordinate_list[a.v]);
+            auto b_centroid =
+                coordinate_calculation::centroid(m_coordinate_list[b.u], m_coordinate_list[b.v]);
+            return a_centroid.lon < b_centroid.lon;
+        };
+
+        auto latitude_compare = [this](const EdgeDataT &a, const EdgeDataT &b) {
+            auto a_centroid =
+                coordinate_calculation::centroid(m_coordinate_list[a.u], m_coordinate_list[a.v]);
+            auto b_centroid =
+                coordinate_calculation::centroid(m_coordinate_list[b.u], m_coordinate_list[b.v]);
+            return a_centroid.lat < b_centroid.lat;
+        };
+
+        util::Log() << "LEAF_NODE_SIZE " << LEAF_NODE_SIZE;
+
+        boost::filesystem::ofstream leaf_node_file(leaf_node_filename, std::ios::binary);
+
+        // position of the last leaf node written to diskcountindex
+        std::size_t leaf_node_count = 0;
+
+        while (!queue.empty())
+        {
+            auto r = queue.front();
+            queue.pop();
+
+            auto N = r.right - r.left + 1;
+            auto M = BRANCHING_FACTOR;
+
+            // We're processing a leaf
+            if (N <= M)
+            {
+                LeafNode current_leaf;
+                current_leaf.object_count = N - 1;
+                // This copies the actual EdgeDataT objects into our leaf node struct
+                BOOST_ASSERT(N <= LEAF_NODE_SIZE);
+                std::copy(leaves.begin() + r.left,
+                          leaves.begin() + r.right,
+                          current_leaf.objects.begin());
+                // Now calculate the bounding-box
+                std::for_each(current_leaf.objects.begin(),
+                              current_leaf.objects.begin() + current_leaf.object_count,
+                              [this, &current_leaf](const EdgeDataT &edge) {
+                                  Coordinate projected_u{web_mercator::fromWGS84(
+                                      Coordinate{m_coordinate_list[edge.u]})};
+                                  Coordinate projected_v{web_mercator::fromWGS84(
+                                      Coordinate{m_coordinate_list[edge.v]})};
+                                  current_leaf.minimum_bounding_rectangle.Extend(projected_u.lon,
+                                                                                 projected_u.lat);
+                                  current_leaf.minimum_bounding_rectangle.Extend(projected_v.lon,
+                                                                                 projected_v.lat);
+                              });
+
+                leaf_node_file.write((char *)&current_leaf, sizeof(current_leaf));
+
+                std::cout << "{ "
+                             "\"type\":\"Feature\",\"properties\":{},\"geometry\":{\"type\":"
+                             "\"Polygon\",\"coordinates\":[[";
+                std::cout << "[" << toFloating(current_leaf.minimum_bounding_rectangle.min_lon)
+                          << "," << toFloating(current_leaf.minimum_bounding_rectangle.min_lat)
+                          << "],";
+                std::cout << "[" << toFloating(current_leaf.minimum_bounding_rectangle.min_lon)
+                          << "," << toFloating(current_leaf.minimum_bounding_rectangle.max_lat)
+                          << "],";
+                std::cout << "[" << toFloating(current_leaf.minimum_bounding_rectangle.max_lon)
+                          << "," << toFloating(current_leaf.minimum_bounding_rectangle.max_lat)
+                          << "],";
+                std::cout << "[" << toFloating(current_leaf.minimum_bounding_rectangle.max_lon)
+                          << "," << toFloating(current_leaf.minimum_bounding_rectangle.min_lat)
+                          << "],";
+                std::cout << "[" << toFloating(current_leaf.minimum_bounding_rectangle.min_lon)
+                          << "," << toFloating(current_leaf.minimum_bounding_rectangle.min_lat)
+                          << "]";
+                std::cout << "]]}}," << std::endl;
+
+                BOOST_ASSERT(m_search_tree[r.parent].child_count <= BRANCHING_FACTOR);
+                m_search_tree[r.parent].children[m_search_tree[r.parent].child_count].index =
+                    leaf_node_count;
+                m_search_tree[r.parent].children[m_search_tree[r.parent].child_count].is_leaf =
+                    true;
+                // Grow the parent node's bounding box'
+                m_search_tree[r.parent].minimum_bounding_rectangle.Extend(
+                    current_leaf.minimum_bounding_rectangle);
+                ++leaf_node_count;
+                ++m_search_tree[r.parent].child_count;
+                continue;
+            }
+
+            TreeNode current_node;
+            m_search_tree.push_back(current_node);
+
+            // Special case for the first item (height = 0),
+            if (r.height == 0)
+            {
+                r.height = std::ceil(std::log(N) / std::log(M));
+                M = std::ceil(N / std::pow(M, r.height - 1));
+            }
+            else
+            {
+                BOOST_ASSERT(m_search_tree[r.parent].child_count < BRANCHING_FACTOR);
+                m_search_tree[r.parent].children[m_search_tree[r.parent].child_count].index =
+                    m_search_tree.size() - 1;
+                m_search_tree[r.parent].children[m_search_tree[r.parent].child_count].is_leaf =
+                    false;
+                ++m_search_tree[r.parent].child_count;
+            }
+
+            std::size_t N2 = std::ceil(N / M);
+            std::size_t N1 = N2 * std::ceil(std::sqrt(M));
+
+            /*
+                        grouped_partial_sort(
+                            leaves.begin() + r.left, leaves.begin() + r.right, N,
+               longitude_compare);
+                            */
+
+            std::sort(leaves.begin() + r.left, leaves.begin() + r.right, longitude_compare);
+
+            // Now, for each column (there are S columns)
+            for (auto i = r.left; i < r.right; i += N1)
+            {
+                auto right2 = std::min(i + N1 - 1, r.right);
+                /*
+                grouped_partial_sort(
+                    leaves.begin() + i, leaves.begin() + right2, N2, latitude_compare);
+                    */
+                std::sort(leaves.begin() + i, leaves.begin() + right2, latitude_compare);
+                for (auto j = i; j <= right2; j += N2)
+                {
+                    auto right3 = std::min(j + N2 - 1, right2);
+                    queue.emplace(m_search_tree.size() - 1, j, right3, r.height - 1);
+                }
+            }
+        }
+
+        // Because we used a queue above, the m_search_tree vector is sorted in
+        // the same order as a breadth-first-search of the tree.  We can iterate
+        // over this in reverse and propogate node recangle sizes up the tree
+        // The leaf nodes already have their bounding box set, so we just need to
+        // propogate those up the tree
+
+        std::stack<std::size_t> n;
+        for (auto n = m_search_tree.rbegin(); n != m_search_tree.rend(); n++)
+        {
+            // Skip the bottom of the tree, the sizes are already set
+            if (n->child_count == 0 || n->children[0].is_leaf)
+            {
+                std::cout << "{ "
+                             "\"type\":\"Feature\",\"properties\":{},\"geometry\":{\"type\":"
+                             "\"Polygon\",\"coordinates\":[[";
+                std::cout << "[" << toFloating(n->minimum_bounding_rectangle.min_lon) << ","
+                          << toFloating(n->minimum_bounding_rectangle.min_lat) << "],";
+                std::cout << "[" << toFloating(n->minimum_bounding_rectangle.min_lon) << ","
+                          << toFloating(n->minimum_bounding_rectangle.max_lat) << "],";
+                std::cout << "[" << toFloating(n->minimum_bounding_rectangle.max_lon) << ","
+                          << toFloating(n->minimum_bounding_rectangle.max_lat) << "],";
+                std::cout << "[" << toFloating(n->minimum_bounding_rectangle.max_lon) << ","
+                          << toFloating(n->minimum_bounding_rectangle.min_lat) << "],";
+                std::cout << "[" << toFloating(n->minimum_bounding_rectangle.min_lon) << ","
+                          << toFloating(n->minimum_bounding_rectangle.min_lat) << "]";
+                std::cout << "]]}}," << std::endl;
+                continue;
+            }
+            for (auto i = 0u; i < n->child_count; i++)
+            {
+                n->minimum_bounding_rectangle.Extend(
+                    m_search_tree[n->children[i].index].minimum_bounding_rectangle);
+            }
+            if (n != m_search_tree.rbegin())
+                std::cout << "," << std::endl;
+            std::cout << "{ "
+                         "\"type\":\"Feature\",\"properties\":{},\"geometry\":{\"type\":"
+                         "\"Polygon\",\"coordinates\":[[";
+            std::cout << "[" << toFloating(n->minimum_bounding_rectangle.min_lon) << ","
+                      << toFloating(n->minimum_bounding_rectangle.min_lat) << "],";
+            std::cout << "[" << toFloating(n->minimum_bounding_rectangle.min_lon) << ","
+                      << toFloating(n->minimum_bounding_rectangle.max_lat) << "],";
+            std::cout << "[" << toFloating(n->minimum_bounding_rectangle.max_lon) << ","
+                      << toFloating(n->minimum_bounding_rectangle.max_lat) << "],";
+            std::cout << "[" << toFloating(n->minimum_bounding_rectangle.max_lon) << ","
+                      << toFloating(n->minimum_bounding_rectangle.min_lat) << "],";
+            std::cout << "[" << toFloating(n->minimum_bounding_rectangle.min_lon) << ","
+                      << toFloating(n->minimum_bounding_rectangle.min_lat) << "]";
+            std::cout << "]]}}," << std::endl;
+        }
+        std::cout << std::endl;
+        util::Log() << "There are now " << leaf_node_count << " leaf nodes and "
+                    << m_search_tree.size() << " tree nodes";
+
+        // open tree file
+        storage::io::FileWriter tree_node_file(tree_node_filename,
+                                               storage::io::FileWriter::HasNoFingerprint);
+
+        std::uint64_t size_of_tree = m_search_tree.size();
+        BOOST_ASSERT_MSG(0 < size_of_tree, "tree empty");
+
+        tree_node_file.WriteOne(size_of_tree);
+        tree_node_file.WriteFrom(&m_search_tree[0], size_of_tree);
     }
 
     // Construct a packed STR-RTree with the Luetengger-Edgington-Lopez approach
