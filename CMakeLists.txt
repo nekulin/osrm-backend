@@ -449,7 +449,7 @@ if(ENABLE_MASON)
 
   mason_use(libshp2 VERSION ${MASON_LIBSHP_VERSION})
   set(LIBSHAPEFILE_INCLUDE_DIR ${MASON_PACKAGE_libshp2_INCLUDE_DIRS})
-  set(LIBSHAPEFILE_LIBRARY ${MASON_PACKAGE_libshp2_LDFLAGS})
+  set(MAYBE_SHAPEFILE ${MASON_PACKAGE_libshp2_LDFLAGS})
 
   if(NOT MASON_PACKAGE_tbb_LIBRARY_DIRS)
     message(FATAL_ERROR "MASON_PACKAGE_tbb_LIBRARY_DIRS is empty, rpath will not work")
@@ -690,13 +690,13 @@ target_link_libraries(osrm_store ${STORAGE_LIBRARIES})
 
 # BUILD_COMPONENTS
 add_executable(osrm-components src/tools/components.cpp $<TARGET_OBJECTS:UTIL>)
-target_link_libraries(osrm-components ${TBB_LIBRARIES} ${BOOST_BASE_LIBRARIES} ${LIBSHAPEFILE_LIBRARY})
+target_link_libraries(osrm-components ${TBB_LIBRARIES} ${BOOST_BASE_LIBRARIES} ${MAYBE_SHAPEFILE})
 install(TARGETS osrm-components DESTINATION bin)
 
 if(BUILD_TOOLS)
   message(STATUS "Activating OSRM internal tools")
   add_executable(osrm-io-benchmark src/tools/io-benchmark.cpp $<TARGET_OBJECTS:UTIL>)
-  target_link_libraries(osrm-io-benchmark ${BOOST_BASE_LIBRARIES} ${LIBSHAPEFILE_LIBRARY})
+  target_link_libraries(osrm-io-benchmark ${BOOST_BASE_LIBRARIES} ${MAYBE_SHAPEFILE})
 
   install(TARGETS osrm-io-benchmark DESTINATION bin)
 
@@ -704,7 +704,7 @@ if(BUILD_TOOLS)
     add_executable(osrm-extract-conditionals src/tools/extract-conditionals.cpp $<TARGET_OBJECTS:UTIL>)
     target_include_directories(osrm-extract-conditionals PRIVATE ${LIBSHAPEFILE_INCLUDE_DIR})
     target_link_libraries(osrm-extract-conditionals ${OSMIUM_LIBRARIES} ${BOOST_BASE_LIBRARIES} ${Boost_PROGRAM_OPTIONS_LIBRARY}
-      ${LIBSHAPEFILE_LIBRARY} ${BZIP2_LIBRARIES} ${ZLIB_LIBRARY} ${EXPAT_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT})
+      ${MAYBE_SHAPEFILE} ${BZIP2_LIBRARIES} ${ZLIB_LIBRARY} ${EXPAT_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT})
     install(TARGETS osrm-extract-conditionals DESTINATION bin)
   endif()
 endif()
