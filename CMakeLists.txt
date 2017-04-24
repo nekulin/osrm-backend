@@ -525,7 +525,7 @@ else()
   ENDIF()
 
   find_package(Shapefile) # optional package libshp-dev
-  if (SHAPEFILE_FOUND)
+  if (Shapefile_FOUND)
     set(MAYBE_SHAPEFILE "${LIBSHAPEFILE_LIBRARY}")
     target_include_directories(UTIL PRIVATE ${LIBSHAPEFILE_INCLUDE_DIR})
     target_compile_definitions(UTIL PRIVATE COMPILE_DEFINITIONS ENABLE_SHAPEFILE)
