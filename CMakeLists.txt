@@ -524,9 +524,13 @@ else()
     ENDIF()
   ENDIF()
 
-  find_package(Shapefile) # package libshp-dev
-  if(NOT SHAPEFILE_FOUND)
-    message(FATAL_ERROR "Shapefile library (libshp-dev) was not found")
+  find_package(Shapefile) # optional package libshp-dev
+  if (SHAPEFILE_FOUND)
+    set(MAYBE_SHAPEFILE "${LIBSHAPEFILE_LIBRARY}")
+    target_include_directories(UTIL PRIVATE ${LIBSHAPEFILE_INCLUDE_DIR})
+    target_compile_definitions(UTIL PRIVATE COMPILE_DEFINITIONS ENABLE_SHAPEFILE)
+  else()
+    set(MAYBE_SHAPEFILE "")
   endif()
 
   set(USED_LUA_LIBRARIES ${LUA_LIBRARIES})
@@ -646,7 +650,8 @@ set(UPDATER_LIBRARIES
     ${LIBSHAPEFILE_LIBRARY}
     ${MAYBE_RT_LIBRARY}
     ${MAYBE_COVERAGE_LIBRARIES}
-    ${ZLIB_LIBRARY})
+    ${ZLIB_LIBRARY}
+    ${MAYBE_SHAPEFILE})
 set(CONTRACTOR_LIBRARIES
     ${BOOST_BASE_LIBRARIES}
     ${CMAKE_THREAD_LIBS_INIT}
@@ -674,8 +679,7 @@ set(UTIL_LIBRARIES
     ${STXXL_LIBRARY}
     ${TBB_LIBRARIES}
     ${MAYBE_COVERAGE_LIBRARIES})
-# Include paths
-target_include_directories(UTIL PRIVATE ${LIBSHAPEFILE_INCLUDE_DIR})
+
 # Libraries
 target_link_libraries(osrm ${ENGINE_LIBRARIES})
 target_link_libraries(osrm_update ${UPDATER_LIBRARIES})
